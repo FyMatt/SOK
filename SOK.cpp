@@ -7,6 +7,15 @@
 #include "Core/mstd/vector.hpp"
 #include "Core/mstd/string.hpp"
 #include "Core/mstd/LockFreeQueue.hpp"
+#include "Core/utils/ForkManager.cpp"
+
+
+void print(){
+    while(1){
+        std::cout << std::chrono::system_clock::now() << std::ednl;
+        std::this_thread::sleep_for(1);
+    }
+}
 
 
 int main() {
@@ -15,6 +24,7 @@ int main() {
 
     
     // 在此插入测试代码
+    SOK::createChildProcess(print);
     
     
     auto finish = std::chrono::high_resolution_clock::now();
