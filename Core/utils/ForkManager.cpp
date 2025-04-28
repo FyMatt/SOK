@@ -1,20 +1,17 @@
+#pragma once
+
 #include <iostream>
 #include <unistd.h>
-#include <sys/wait.h>
+#include "../mstd/function.hpp"
 
 namespace SOK{
-    void createChildProcess(void (*childFunction)()) {
+    /// @brief 创建子进程
+    /// @param func 子进程主要执行的函数
+    void createChildProcess(mstd::Function<void()> func) {
         pid_t pid = fork();
-        if (pid < 0) {
-            std::cerr << "Fork failed" << std::endl;
-            exit(1);
-        } else if (pid == 0) {
-            // Child process
-            childFunction();
+        if (pid == 0) {
+            func();
             exit(0);
-        } else {
-            // Parent process
-            wait(NULL); // Wait for child process to finish
         }
     }
 }

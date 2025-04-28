@@ -38,33 +38,3 @@ void epoll_worker(int epoll_fd) {
         }
     }
 }
-
-int main() {
-    int epoll_fd = epoll_create1(0);
-    if (epoll_fd == -1) {
-        std::cerr << "Failed to create epoll file descriptor: " << strerror(errno) << std::endl;
-        return 1;
-    }
-
-    // Add your listening socket to the epoll instance here
-    // Example:
-    // int listen_fd = ...;
-    // struct epoll_event event;
-    // event.events = EPOLLIN;
-    // event.data.fd = listen_fd;
-    // if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_fd, &event) == -1) {
-    //     std::cerr << "Failed to add file descriptor to epoll: " << strerror(errno) << std::endl;
-    //     close(epoll_fd);
-    //     return 1;
-    // }
-
-    std::thread(epoll_worker, epoll_fd).detach();
-
-    // Main thread can perform other tasks or wait for termination
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-
-    close(epoll_fd);
-    return 0;
-}
