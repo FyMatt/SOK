@@ -13,7 +13,6 @@ const int READ_SIZE = 1024;
 
 std::mutex mtx;
 
-
 /// @brief 处理epoll工作线程监听到的请求
 /// @param client_fd 要处理请求的文件描述符
 void handle_connection(int client_fd) {
@@ -30,7 +29,6 @@ void handle_connection(int client_fd) {
         write(client_fd, response.c_str(), response.size());
     }
 }
-
 
 /// @brief epoll监听客户端连接以及监听请求
 /// @param epoll_fd epoll文件描述符
