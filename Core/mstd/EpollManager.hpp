@@ -6,7 +6,8 @@
 #include <vector>
 #include <mutex>
 #include <cstring>
-#include "ThreadPool.hpp"
+#include <arpa/inet.h>
+#include "threadPool.hpp"
 
 const int MAX_EVENTS = 10;
 const int READ_SIZE = 1024;
@@ -46,7 +47,14 @@ void epoll_worker(int epoll_fd, int server_fd) {
 
                 // 如果是服务器套接字，接受新连接
                 if (client_fd == server_fd) {
-                    int new_client_fd = accept(server_fd, nullptr, nullptr);
+                    sockaddr_in client_addr;
+                    socklen_t client_len = sizeof(client_addr);
+                    int new_client_fd = accept(server_fd, (sockaddr*)&client_addr, &client_len);
+                    if (new_client_fd != -1) {
+                        char client_ip[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+                        std::cout << "New connection from: " << client_ip << std::endl;
+                    }
                     if (new_client_fd == -1) {
                         std::cerr << "Failed to accept new connection" << std::endl;
                         continue;

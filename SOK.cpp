@@ -48,7 +48,7 @@ int main() {
 
     // 启动站点子进程
     forkManager.createChildProcess([] { siteProcess(8081); });
-    forkManager.createChildProcess([] { siteProcess(8082); });
+    // forkManager.createChildProcess([] { siteProcess(8082); });
 
     while (running.load()) {
         std::string command;
@@ -61,7 +61,7 @@ int main() {
 
             // 重启子进程
             forkManager.createChildProcess([] { siteProcess(8081); });
-            forkManager.createChildProcess([] { siteProcess(8082); });
+            // forkManager.createChildProcess([] { siteProcess(8082); });
         } else if (command == "exit") {
             running.store(false);
         }
