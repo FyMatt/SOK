@@ -1,4 +1,5 @@
 #pragma once
+
 #include <stdexcept>
 #include <initializer_list>
 #include <memory>
