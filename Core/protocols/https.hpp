@@ -5,9 +5,33 @@
 #include <iostream>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include "../mstd/fileCache.hpp"
+#include <map>
+#include <vector>
 
 namespace SOK {
+namespace https_util {
+
+inline std::map<std::string, std::string> parse_headers(std::istringstream& iss) {
+    std::map<std::string, std::string> headers;
+    std::string line;
+    while (std::getline(iss, line) && line != "\r") {
+        auto pos = line.find(":");
+        if (pos != std::string::npos) {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+            key.erase(0, key.find_first_not_of(" \t"));
+            key.erase(key.find_last_not_of(" \t\r") + 1);
+            value.erase(0, value.find_first_not_of(" \t"));
+            value.erase(value.find_last_not_of(" \t\r") + 1);
+            headers[key] = value;
+        }
+    }
+    return headers;
+}
+
 inline void handle_https(int client_fd, SSL_CTX* ssl_ctx) {
+    static mstd::FileCache file_cache(1024*1024*50); // 50MB缓存
     SSL* ssl = SSL_new(ssl_ctx);
     SSL_set_fd(ssl, client_fd);
 
@@ -27,31 +51,70 @@ inline void handle_https(int client_fd, SSL_CTX* ssl_ctx) {
         return;
     }
 
-    // 读取完整HTTPS请求
-    std::string request;
-    char buf[4096];
-    int len;
-    while ((len = SSL_read(ssl, buf, sizeof(buf))) > 0) {
-        request.append(buf, len);
-        if (request.find("\r\n\r\n") != std::string::npos) break;
-    }
-    if (request.empty()) {
-        SSL_shutdown(ssl);
-        close(client_fd);
-        SSL_free(ssl);
-        return;
-    }
+    bool keep_alive = false;
+    do {
+        // 读取完整HTTPS请求
+        std::string request;
+        char buf[4096];
+        int len;
+        while ((len = SSL_read(ssl, buf, sizeof(buf))) > 0) {
+            request.append(buf, len);
+            if (request.find("\r\n\r\n") != std::string::npos) break;
+        }
+        if (request.empty()) {
+            break;
+        }
 
-    // 解析请求行
-    std::istringstream iss(request);
-    std::string method, path, version;
-    iss >> method >> path >> version;
+        // 解析请求行和头部
+        std::istringstream iss(request);
+        std::string method, path, version;
+        iss >> method >> path >> version;
+        std::string dummy;
+        std::getline(iss, dummy);
+        auto headers = parse_headers(iss);
 
-    std::cout << "HTTPS Request: " << method << " " << path << " " << version << std::endl;
+        auto conn_it = headers.find("Connection");
+        if (conn_it != headers.end() && (conn_it->second == "keep-alive" || conn_it->second == "Keep-Alive")) {
+            keep_alive = true;
+        } else {
+            keep_alive = false;
+        }
 
-    // 构造响应
-    std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 38\r\n\r\nHello, World! This is SOK HTTPS Server!";
-    SSL_write(ssl, response.c_str(), response.size());
+        if (method == "GET" || method == "HEAD") {
+            std::string file_path = "." + path;
+            if (file_path == "./") file_path = "./index.html";
+            auto file = file_cache.get(file_path);
+            if (file) {
+                const auto& content = file->first;
+                const auto& mime = file->second;
+                std::ostringstream oss;
+                oss << version << " 200 OK\r\nContent-Type: " << mime << "\r\nContent-Length: " << content.size() << "\r\n";
+                if (keep_alive) oss << "Connection: keep-alive\r\n";
+                oss << "\r\n";
+                SSL_write(ssl, oss.str().c_str(), oss.str().size());
+                if (method == "GET") {
+                    SSL_write(ssl, content.data(), content.size());
+                }
+            } else {
+                std::string not_found = version + " 404 Not Found\r\nContent-Length: 13\r\n\r\n404 Not Found";
+                SSL_write(ssl, not_found.c_str(), not_found.size());
+            }
+        } else if (method == "POST") {
+            std::string body;
+            auto pos = request.find("\r\n\r\n");
+            if (pos != std::string::npos) {
+                body = request.substr(pos + 4);
+            }
+            std::ostringstream oss;
+            oss << version << " 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " << body.size() << "\r\n";
+            if (keep_alive) oss << "Connection: keep-alive\r\n";
+            oss << "\r\n" << body;
+            SSL_write(ssl, oss.str().c_str(), oss.str().size());
+        } else {
+            std::string not_impl = version + " 501 Not Implemented\r\nContent-Length: 18\r\n\r\n501 Not Implemented";
+            SSL_write(ssl, not_impl.c_str(), not_impl.size());
+        }
+    } while (keep_alive);
     SSL_shutdown(ssl);
     close(client_fd);
     SSL_free(ssl);
@@ -79,5 +142,7 @@ inline SSL_CTX* create_ssl_ctx(const char* cert_file, const char* key_file) {
         exit(EXIT_FAILURE);
     }
     return ctx;
+}
+
 }
 }

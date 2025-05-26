@@ -157,8 +157,8 @@ private:
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower); // 转换扩展名为小写
 
         static const std::unordered_map<std::string, std::string> mime_types = {
-            {"html", "text/html"},
-            {"htm",  "text/html"},
+            {"html", "text/html; charset=utf-8"},
+            {"htm",  "text/html; charset=utf-8"},
             {"css",  "text/css"},
             {"js",   "application/javascript"},
             {"json", "application/json"},
