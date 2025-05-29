@@ -7,6 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <iostream>
 
 namespace mstd {
 
@@ -59,7 +60,8 @@ private:
     void parseFile(const std::string& filePath) {
         std::ifstream file(filePath);
         if (!file.is_open()) {
-            throw std::runtime_error("Failed to open file: " + filePath);
+            std::cerr << "[YamlReader] Failed to open file: " << filePath << std::endl;
+            return; // 不抛异常，直接返回，data保持为空
         }
 
         std::string line;

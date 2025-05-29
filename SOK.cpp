@@ -1,4 +1,5 @@
 #include <iostream>
+#include <numeric>
 #include <atomic>
 #include <signal.h>
 #include <thread>
@@ -7,6 +8,8 @@
 #include "Core/utils/ForkManager.hpp"
 #include "Core/utils/SocketUtils.hpp"
 #include "Core/mstd/EpollManager.hpp"
+#include "Core/utils/Logger.hpp"
+#include "Core/utils/Config.hpp"
 
 std::atomic<bool> running(true);
 
@@ -37,7 +40,7 @@ void processWorker(const std::vector<int>& ports) {
             continue;
         }
         server_fds.push_back(server_fd);
-        std::cout << "Process " << getpid() << " listening on port " << port << std::endl;
+        SOK::Logger::instance().info("Process " + std::to_string(getpid()) + " listening on port " + std::to_string(port));
     }
     epoll_worker(epoll_fd); // -1 表示不需要特定的 server_fd
 
@@ -50,20 +53,33 @@ void processWorker(const std::vector<int>& ports) {
 int main() {
     signal(SIGINT, signalHandler);
 
+    // 初始化日志系统
+    SOK::Logger::instance().set_logfile("server.log");
+    SOK::Logger::instance().info("Server started...");
+    
+    // 加载配置文件
+    SOK::Config::instance().load("config.yaml");
+    SOK::Logger::instance().info("Loaded configuration...");
+    
+    SOK::Logger::instance().info("Successfully initialized SOK server.");
+
+    SOK::Logger::instance().info("Config IP: " + SOK::Config::instance().getValue<std::string>("ip"));
+
+
     SOK::ForkManager forkManager;
 
     // 获取 CPU 核心数
     int cpu_cores = std::thread::hardware_concurrency();
-    std::cout << "Detected " << cpu_cores << " CPU cores." << std::endl;
+    SOK::Logger::instance().info("Detected " + std::to_string(cpu_cores) + " CPU cores.");
 
     // 要监听的端口列表
-    std::vector<int> ports = {
-        8081, 8082};
-    std::cout << "Listening on ports: ";
-    for (int port : ports) {
-        std::cout << port << " ";
-    }
-    std::cout << std::endl;
+    std::vector<int> ports = {8081, 8082};
+    SOK::Logger::instance().info("Listening on ports: " + 
+        std::accumulate(
+            std::next(ports.begin()), ports.end(), std::to_string(ports[0]),
+            [](std::string a, int b) { return std::move(a) + " " + std::to_string(b); }
+        )
+    );
 
     // 将端口分配给每个进程
     int ports_per_process = (ports.size() + cpu_cores - 1) / cpu_cores; // 向上取整
@@ -85,7 +101,7 @@ int main() {
         std::cin >> command;
 
         if (command == "restart") {
-            std::cout << "Restarting child processes..." << std::endl;
+            SOK::Logger::instance().info("Restarting child processes...");
             forkManager.terminateAll();
 
             // 重新分配端口并启动子进程

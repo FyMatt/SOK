@@ -1,3 +1,6 @@
 .vscode
 SOK.exe
 SOK
+*.yaml
+*.log
+*.html

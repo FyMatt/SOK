@@ -4,7 +4,6 @@
 #include <unistd.h>
 #include <vector>
 #include <regex>
-#include <iostream>
 #include <openssl/ssl.h>
 #include "../protocols/http.hpp"
 #include "../protocols/https.hpp"

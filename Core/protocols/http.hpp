@@ -4,6 +4,7 @@
 #include <sstream>
 #include <iostream>
 #include "../mstd/fileCache.hpp"
+#include "../utils/Logger.hpp"
 #include <map>
 #include <vector>
 
@@ -65,7 +66,7 @@ inline void handle_http(int client_fd) {
         if (method == "GET" || method == "HEAD") {
             std::string file_path = "." + path;
             if (file_path == "./") file_path = "./index.html";
-            std::cout << "File URL: " << file_path << std::endl;
+            SOK::Logger::instance().info("HTTP Request: " + method + " " + file_path);
             auto file = file_cache.get(file_path);
             if (file) {
                 const auto& content = file->first;
@@ -78,7 +79,6 @@ inline void handle_http(int client_fd) {
                 if (method == "GET") {
                     write(client_fd, content.data(), content.size()); // 发送文件内容（响应体）
                 }
-                std::cout << "Content: " << content.data() << std::endl;
             } else {
                 std::string not_found = version + " 404 Not Found\r\nContent-Length: 13\r\n\r\n404 Not Found";
                 write(client_fd, not_found.c_str(), not_found.size());

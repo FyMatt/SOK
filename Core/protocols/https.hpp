@@ -2,10 +2,10 @@
 #include <string>
 #include <unistd.h>
 #include <sstream>
-#include <iostream>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include "../mstd/fileCache.hpp"
+#include "../utils/Logger.hpp"
 #include <map>
 #include <vector>
 
@@ -38,7 +38,7 @@ inline void handle_https(int client_fd, SSL_CTX* ssl_ctx) {
     unsigned char peek_buf;
     ssize_t peeked = recv(client_fd, &peek_buf, 1, MSG_PEEK);
     if (peeked != 1 || peek_buf != 0x16) {
-        std::cerr << "Non-SSL connection attempt on HTTPS port." << std::endl;
+        SOK::Logger::instance().error("Not a valid SSL/TLS connection");
         close(client_fd);
         SSL_free(ssl);
         return;
