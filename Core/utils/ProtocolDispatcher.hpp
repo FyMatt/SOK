@@ -10,7 +10,8 @@
 
 namespace SOK {
 
-inline void dispatch_protocol(int client_fd) {
+inline void dispatch_protocol(int client_fd, int port) {
+    // SOK::Logger::instance().info("client_fd: " + std::to_string(client_fd) + "\t http port: " + std::to_string(port));
     // 只peek前16字节用于协议判断
     std::vector<char> peek_buf(16);
     ssize_t n = recv(client_fd, peek_buf.data(), peek_buf.size(), MSG_PEEK);
@@ -29,10 +30,10 @@ inline void dispatch_protocol(int client_fd) {
                (static_cast<unsigned char>(data[2]) >= 0x00 && static_cast<unsigned char>(data[2]) <= 0x04)) {
         // HTTPS协议，交给handle_https处理（handle_https里负责SSL握手和完整读取、解析）
         SSL_CTX* ssl_ctx = SOK::https_util::create_ssl_ctx("server.crt", "server.key");
-        SOK::https_util::handle_https(client_fd, ssl_ctx);
+        SOK::https_util::handle_https(client_fd, ssl_ctx, port);
     }else if (std::regex_search(data, http_regex)) {
         // HTTP协议，交给handle_http处理（handle_http里负责完整读取和解析）
-        SOK::http_util::handle_http(client_fd);
+        SOK::http_util::handle_http(client_fd, port);
     } else {
         // 其他协议可扩展
         // handle_proxy(client_fd); 或 handle_loadbalance(client_fd);

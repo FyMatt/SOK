@@ -30,7 +30,8 @@ inline std::map<std::string, std::string> parse_headers(std::istringstream& iss)
     return headers;
 }
 
-inline void handle_https(int client_fd, SSL_CTX* ssl_ctx) {
+inline void handle_https(int client_fd, SSL_CTX* ssl_ctx, int port) {
+    SOK::Logger::instance().info("https client_fd: " + std::to_string(client_fd) + "\t http port: " + std::to_string(port));
     static mstd::FileCache file_cache(1024*1024*50); // 50MB缓存
     SSL* ssl = SSL_new(ssl_ctx);
     SSL_set_fd(ssl, client_fd);

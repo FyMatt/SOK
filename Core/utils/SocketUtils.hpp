@@ -5,6 +5,10 @@
 #include <unistd.h>
 #include <cstring>
 #include <stdexcept>
+#include <map>
+#include <mutex>
+
+namespace SOK {
 
 int setup_server(int port) {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -34,4 +38,43 @@ int setup_server(int port) {
     }
 
     return server_fd;
+}
+
+class FdPortRegistry {
+public:
+    static FdPortRegistry& instance() {
+        static FdPortRegistry inst;
+        return inst;
+    }
+
+    // 添加fd-port映射，若已存在则不添加，返回是否添加成功
+    bool addFdPort(int fd, int port) {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto it = fd_port.find(fd);
+        if (it != fd_port.end()) return false;
+        fd_port[fd] = port;
+        return true;
+    }
+
+    // 获取fd对应端口，未找到返回-1
+    int getPort(int fd) {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto it = fd_port.find(fd);
+        if (it != fd_port.end()) return it->second;
+        return -1;
+    }
+
+    // 可选：移除fd
+    void removeFd(int fd) {
+        std::lock_guard<std::mutex> lock(mtx);
+        fd_port.erase(fd);
+    }
+private:
+    std::map<int, int> fd_port;
+    std::mutex mtx;
+    FdPortRegistry() = default;
+    FdPortRegistry(const FdPortRegistry&) = delete;
+    FdPortRegistry& operator=(const FdPortRegistry&) = delete;
+};
+
 }

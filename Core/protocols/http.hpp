@@ -30,7 +30,8 @@ inline std::map<std::string, std::string> parse_headers(std::istringstream& iss)
     return headers;
 }
 
-inline void handle_http(int client_fd) {
+inline void handle_http(int client_fd, int port) {
+    SOK::Logger::instance().info("http client_fd: " + std::to_string(client_fd) + "\t http port: " + std::to_string(port));
     static mstd::FileCache file_cache(1024*1024*50); // 50MB缓存
     bool keep_alive = false;
     do {
