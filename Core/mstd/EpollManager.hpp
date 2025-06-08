@@ -36,6 +36,10 @@ void epoll_worker(int epoll_fd) {
             if (events[i].events & EPOLLIN) {
                 int client_fd = events[i].data.fd;
                 int port = SOK::FdPortRegistry::instance().getPort(client_fd);
+                if(port == -1) {
+                    // std::cerr << "client_fd: " << client_fd << "\tFailed to get port for client_fd: " << client_fd << std::endl;
+                    continue; // 如果没有找到对应的端口，跳过这个事件
+                }
                 // SOK::Logger::instance().info("server_client_fd: " + std::to_string(client_fd));
                 sockaddr_in client_addr;
                 socklen_t client_len = sizeof(client_addr);

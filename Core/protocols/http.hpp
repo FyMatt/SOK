@@ -3,10 +3,11 @@
 #include <unistd.h>
 #include <sstream>
 #include <iostream>
-#include "../mstd/fileCache.hpp"
-#include "../utils/Logger.hpp"
 #include <map>
 #include <vector>
+#include "../utils/Logger.hpp"
+#include "../mstd/fileCache.hpp"
+#include "../utils/SiteConfig.hpp"
 
 namespace SOK{
 namespace http_util {
@@ -30,8 +31,10 @@ inline std::map<std::string, std::string> parse_headers(std::istringstream& iss)
     return headers;
 }
 
-inline void handle_http(int client_fd, int port) {
-    SOK::Logger::instance().info("http client_fd: " + std::to_string(client_fd) + "\t http port: " + std::to_string(port));
+inline void handle_http(int client_fd, const SOK::utils::SiteInfo& site_info) {
+    // SOK::Logger::instance().info("http client_fd: " + std::to_string(client_fd) + "\n http port: " + std::to_string(site_info.getPort()));
+    // SOK::Logger::instance().info("Site root: " + site_info.getRootDir());
+    // SOK::Logger::instance().info("Site name: " + site_info.getSiteName());
     static mstd::FileCache file_cache(1024*1024*50); // 50MB缓存
     bool keep_alive = false;
     do {
@@ -65,9 +68,12 @@ inline void handle_http(int client_fd, int port) {
 
         // 处理GET/HEAD/POST
         if (method == "GET" || method == "HEAD") {
-            std::string file_path = "." + path;
-            if (file_path == "./") file_path = "./index.html";
-            SOK::Logger::instance().info("HTTP Request: " + method + " " + file_path);
+            // 使用site_info.getRootDir()作为根目录
+            std::string root_dir = site_info.getRootDir();
+            std::string file_path = root_dir + path;
+            if (file_path == root_dir + "/" || file_path == root_dir) file_path = root_dir + "/index.html";
+            SOK::Logger::instance().info("Http Request: " + method + " " + path);
+            SOK::Logger::instance().info("find file_path: " + file_path);
             auto file = file_cache.get(file_path);
             if (file) {
                 const auto& content = file->first;

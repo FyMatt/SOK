@@ -7,6 +7,7 @@
 #include <openssl/ssl.h>
 #include "../protocols/http.hpp"
 #include "../protocols/https.hpp"
+#include "SiteConfig.hpp"
 
 namespace SOK {
 
@@ -27,13 +28,16 @@ inline void dispatch_protocol(int client_fd, int port) {
     if(n >= 3 &&
                static_cast<unsigned char>(data[0]) == 0x16 &&
                static_cast<unsigned char>(data[1]) == 0x03 &&
-               (static_cast<unsigned char>(data[2]) >= 0x00 && static_cast<unsigned char>(data[2]) <= 0x04)) {
+               (static_cast<unsigned char>(data[2]) >= 0x00 && 
+               static_cast<unsigned char>(data[2]) <= 0x04)) {
         // HTTPS协议，交给handle_https处理（handle_https里负责SSL握手和完整读取、解析）
         SSL_CTX* ssl_ctx = SOK::https_util::create_ssl_ctx("server.crt", "server.key");
-        SOK::https_util::handle_https(client_fd, ssl_ctx, port);
+        SOK::utils::SiteInfo site_info(port);
+        SOK::https_util::handle_https(client_fd, ssl_ctx, site_info);
     }else if (std::regex_search(data, http_regex)) {
         // HTTP协议，交给handle_http处理（handle_http里负责完整读取和解析）
-        SOK::http_util::handle_http(client_fd, port);
+        SOK::utils::SiteInfo site_info(port);
+        SOK::http_util::handle_http(client_fd, site_info);
     } else {
         // 其他协议可扩展
         // handle_proxy(client_fd); 或 handle_loadbalance(client_fd);

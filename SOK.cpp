@@ -78,34 +78,34 @@ int main() {
 
     // 测试yaml解析输出
     auto root = SOK::Config::instance().root();
-    std::string ip = root.getValue<std::string>("ip");
-    int proc_num = root.getValue<int>("cpu_cores");
-    SOK::Logger::instance().info("Config IP: " + ip);
-    SOK::Logger::instance().info("Config cpu_cores: " + std::to_string(proc_num));
-    auto servers = SOK::Config::instance().root().getArray("servers");
+    // std::string ip = root.getValue<std::string>("ip");
+    // int proc_num = root.getValue<int>("cpu_cores");
+    // SOK::Logger::instance().info("Config IP: " + ip);
+    // SOK::Logger::instance().info("Config cpu_cores: " + std::to_string(proc_num));
+    auto servers = root.getArray("servers");
     for (const auto& server : servers) {
-        std::string name = server.getValue<std::string>("name");
+        // std::string name = server.getValue<std::string>("name");
         int port = server.getValue<int>("port");
         ports.push_back(port);
-        std::string root_dir = server.getValue<std::string>("root");
-        SOK::Logger::instance().info("Server: name=" + name + ", port=" + std::to_string(port) + ", root=" + root_dir);
-        // 检查是否有 locations 属性
-        try {
-            auto locations = server.getArray("locations");
-            for (const auto& loc : locations) {
-                // location 可能是对象，也可能是嵌套对象
-                try {
-                    auto location_obj = loc.getObject("location");
-                    std::string url = location_obj.getValue<std::string>("url");
-                    std::string proxy_pass, response;
-                    try { proxy_pass = location_obj.getValue<std::string>("proxy_pass"); } catch (...) {}
-                    try { response = location_obj.getValue<std::string>("response"); } catch (...) {}
-                    SOK::Logger::instance().info("  Location: url=" + url + (proxy_pass.empty() ? "" : (", proxy_pass=" + proxy_pass)) + (response.empty() ? "" : (", response=" + response)));
-                } catch (...) {}
-            }
-        } catch (...) {
-            // 没有locations属性，忽略
-        }
+        // std::string root_dir = server.getValue<std::string>("root");
+        // SOK::Logger::instance().info("Server: name=" + name + ", port=" + std::to_string(port) + ", root=" + root_dir);
+        // // 检查是否有 locations 属性
+        // try {
+        //     auto locations = server.getArray("locations");
+        //     for (const auto& loc : locations) {
+        //         // location 可能是对象，也可能是嵌套对象
+        //         try {
+        //             auto location_obj = loc.getObject("location");
+        //             std::string url = location_obj.getValue<std::string>("url");
+        //             std::string proxy_pass, response;
+        //             try { proxy_pass = location_obj.getValue<std::string>("proxy_pass"); } catch (...) {}
+        //             try { response = location_obj.getValue<std::string>("response"); } catch (...) {}
+        //             SOK::Logger::instance().info("  Location: url=" + url + (proxy_pass.empty() ? "" : (", proxy_pass=" + proxy_pass)) + (response.empty() ? "" : (", response=" + response)));
+        //         } catch (...) {}
+        //     }
+        // } catch (...) {
+        //     // 没有locations属性，忽略
+        // }
     }
 
     SOK::Logger::instance().info("Loaded configuration...");
@@ -149,12 +149,17 @@ int main() {
 
     while (running.load()) {
         std::string command;
+        std::this_thread::sleep_for(std::chrono::seconds(2));
         std::cout << "Enter command (restart/exit): ";
         std::cin >> command;
 
         if (command == "restart") {
             SOK::Logger::instance().info("Restarting child processes...");
             forkManager.terminateAll();
+
+            // 重新加载配置文件
+            SOK::Logger::instance().set_logfile("server.log");
+            SOK::Config::instance().load("config.yaml");
 
             // 重新分配端口并启动子进程
             it = ports.begin();
