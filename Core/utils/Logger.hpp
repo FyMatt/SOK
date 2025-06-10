@@ -50,6 +50,23 @@ public:
         }
         std::cout << oss.str();
     }
+
+    /// @brief 日志输出
+    /// @param level 日志级别
+    /// @param msg 输出内容
+    /// @param file 调用日志输出的文件名
+    /// @param line 调用日志输出的行号
+    void log(Level level, const std::string& msg, const char* file, int line) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        check_and_rotate();
+        std::ostringstream oss;
+        oss << now() << " [" << level_str(level) << "] [" << file << ":" << line << "] " << msg << "\n";
+        if (ofs_.is_open()) {
+            ofs_ << oss.str();
+            ofs_.flush();
+        }
+        std::cout << oss.str();
+    }
     void info(const std::string& msg) { log(INFO, msg); }
     void warn(const std::string& msg) { log(WARNING, msg); }
     void error(const std::string& msg) { log(ERROR, msg); }
@@ -103,3 +120,10 @@ private:
 };
 
 }
+
+#ifndef SOK_LOG_MACROS
+#define SOK_LOG_MACROS
+#define SOK_LOG_INFO(msg) SOK::Logger::instance().log(SOK::Logger::INFO, msg, __FILE__, __LINE__)
+#define SOK_LOG_WARN(msg) SOK::Logger::instance().log(SOK::Logger::WARNING, msg, __FILE__, __LINE__)
+#define SOK_LOG_ERROR(msg) SOK::Logger::instance().log(SOK::Logger::ERROR, msg, __FILE__, __LINE__)
+#endif

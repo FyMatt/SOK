@@ -31,83 +31,79 @@ inline std::map<std::string, std::string> parse_headers(std::istringstream& iss)
     return headers;
 }
 
-inline void handle_http(int client_fd, const SOK::utils::SiteInfo& site_info) {
-    // SOK::Logger::instance().info("http client_fd: " + std::to_string(client_fd) + "\n http port: " + std::to_string(site_info.getPort()));
-    // SOK::Logger::instance().info("Site root: " + site_info.getRootDir());
-    // SOK::Logger::instance().info("Site name: " + site_info.getSiteName());
+inline bool handle_http(int client_fd, const SOK::utils::SiteInfo& site_info) {
     static mstd::FileCache file_cache(1024*1024*50); // 50MB缓存
     bool keep_alive = false;
-    do {
-        // 读取完整HTTP请求
-        std::string request;
-        char buf[4096];
-        ssize_t len;
-        while ((len = recv(client_fd, buf, sizeof(buf), 0)) > 0) {
-            request.append(buf, len);
-            if (request.find("\r\n\r\n") != std::string::npos) break; // 头部结束
-        }
-        if (request.empty()) {
-            break;
-        }
+    // 读取完整HTTP请求
+    std::string request;
+    char buf[4096];
+    ssize_t len;
+    while ((len = recv(client_fd, buf, sizeof(buf), 0)) > 0) {
+        request.append(buf, len);
+        if (request.find("\r\n\r\n") != std::string::npos) break; // 头部结束
+    }
 
-        // 解析请求行和头部
-        std::istringstream iss(request);
-        std::string method, path, version;
-        iss >> method >> path >> version;
-        std::string dummy;
-        std::getline(iss, dummy); // 跳过请求行剩余部分
-        auto headers = parse_headers(iss);
+    if (request.empty()) {
+        SOK_LOG_WARN("Received empty request from client_fd: " + std::to_string(client_fd) + " on port: " + std::to_string(site_info.getPort()));
+        return false; // 客户端关闭或出错
+    }
 
-        // 判断keep-alive
-        auto conn_it = headers.find("Connection");
-        if (conn_it != headers.end() && (conn_it->second == "keep-alive" || conn_it->second == "Keep-Alive")) {
-            keep_alive = true;
-        } else {
-            keep_alive = false;
-        }
+    // 解析请求行和头部
+    std::istringstream iss(request);
+    std::string method, path, version;
+    iss >> method >> path >> version;
+    std::string dummy;
+    std::getline(iss, dummy); // 跳过请求行剩余部分
+    auto headers = parse_headers(iss);
 
-        // 处理GET/HEAD/POST
-        if (method == "GET" || method == "HEAD") {
-            // 使用site_info.getRootDir()作为根目录
-            std::string root_dir = site_info.getRootDir();
-            std::string file_path = root_dir + path;
-            if (file_path == root_dir + "/" || file_path == root_dir) file_path = root_dir + "/index.html";
-            SOK::Logger::instance().info("Http Request: " + method + " " + path);
-            SOK::Logger::instance().info("find file_path: " + file_path);
-            auto file = file_cache.get(file_path);
-            if (file) {
-                const auto& content = file->first;
-                const auto& mime = file->second;
-                std::ostringstream oss;
-                oss << version << " 200 OK\r\nContent-Type: " << mime << "\r\nContent-Length: " << content.size() << "\r\n";
-                if (keep_alive) oss << "Connection: keep-alive\r\n";
-                oss << "\r\n";
-                write(client_fd, oss.str().c_str(), oss.str().size()); // 发送HTTP响应头
-                if (method == "GET") {
-                    write(client_fd, content.data(), content.size()); // 发送文件内容（响应体）
-                }
-            } else {
-                std::string not_found = version + " 404 Not Found\r\nContent-Length: 13\r\n\r\n404 Not Found";
-                write(client_fd, not_found.c_str(), not_found.size());
-            }
-        } else if (method == "POST") {
-            // 简单回显POST内容
-            std::string body;
-            auto pos = request.find("\r\n\r\n");
-            if (pos != std::string::npos) {
-                body = request.substr(pos + 4);
-            }
+    // 判断keep-alive
+    auto conn_it = headers.find("Connection");
+    if (conn_it != headers.end() && (conn_it->second == "keep-alive" || conn_it->second == "Keep-Alive")) {
+        keep_alive = true;
+    } else {
+        keep_alive = false;
+    }
+
+    // 处理GET/HEAD/POST
+    if (method == "GET" || method == "HEAD") {
+        // 使用site_info.getRootDir()作为根目录
+        std::string root_dir = site_info.getRootDir();
+        std::string file_path = root_dir + path;
+        if (file_path == root_dir + "/" || file_path == root_dir) file_path = root_dir + "/index.html";
+        SOK::Logger::instance().info("Http Request: " + method + " " + path);
+        auto file = file_cache.get(file_path);
+        if (file) {
+            const auto& content = file->first;
+            const auto& mime = file->second;
             std::ostringstream oss;
-            oss << version << " 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " << body.size() << "\r\n";
+            oss << version << " 200 OK\r\nContent-Type: " << mime << "\r\nContent-Length: " << content.size() << "\r\n";
             if (keep_alive) oss << "Connection: keep-alive\r\n";
-            oss << "\r\n" << body;
-            write(client_fd, oss.str().c_str(), oss.str().size());
+            oss << "\r\n";
+            write(client_fd, oss.str().c_str(), oss.str().size()); // 发送HTTP响应头
+            if (method == "GET") {
+                write(client_fd, content.data(), content.size()); // 发送文件内容（响应体）
+            }
         } else {
-            std::string not_impl = version + " 501 Not Implemented\r\nContent-Length: 18\r\n\r\n501 Not Implemented";
-            write(client_fd, not_impl.c_str(), not_impl.size());
+            std::string not_found = version + " 404 Not Found\r\nContent-Length: 13\r\n\r\n404 Not Found";
+            write(client_fd, not_found.c_str(), not_found.size());
         }
-    } while (keep_alive);
-    close(client_fd);
+    } else if (method == "POST") {
+        // 简单回显POST内容
+        std::string body;
+        auto pos = request.find("\r\n\r\n");
+        if (pos != std::string::npos) {
+            body = request.substr(pos + 4);
+        }
+        std::ostringstream oss;
+        oss << version << " 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " << body.size() << "\r\n";
+        if (keep_alive) oss << "Connection: keep-alive\r\n";
+        oss << "\r\n" << body;
+        write(client_fd, oss.str().c_str(), oss.str().size());
+    } else {
+        std::string not_impl = version + " 501 Not Implemented\r\nContent-Length: 18\r\n\r\n501 Not Implemented";
+        write(client_fd, not_impl.c_str(), not_impl.size());
+    }
+    return keep_alive; // 返回是否需要保持连接
 }
 
 }

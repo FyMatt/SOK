@@ -159,15 +159,15 @@ private:
         static const std::unordered_map<std::string, std::string> mime_types = {
             {"html", "text/html; charset=utf-8"},
             {"htm",  "text/html; charset=utf-8"},
-            {"css",  "text/css"},
-            {"js",   "application/javascript"},
-            {"json", "application/json"},
+            {"css",  "text/css; charset=utf-8"},
+            {"js",   "application/javascript; charset=utf-8"},
+            {"json", "application/json; charset=utf-8"},
             {"png",  "image/png"},
             {"jpg",  "image/jpeg"},
             {"jpeg", "image/jpeg"},
             {"gif",  "image/gif"},
             {"svg",  "image/svg+xml"},
-            {"txt",  "text/plain"},
+            {"txt",  "text/plain; charset=utf-8"},
             {"ico",  "image/x-icon"}
         };
 

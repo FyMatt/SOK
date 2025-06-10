@@ -11,15 +11,14 @@
 
 namespace SOK {
 
-inline void dispatch_protocol(int client_fd, int port) {
-    // SOK::Logger::instance().info("client_fd: " + std::to_string(client_fd) + "\t http port: " + std::to_string(port));
+inline bool dispatch_protocol(int client_fd, int port) {
+    // SOK_LOG_INFO("client_fd: " + std::to_string(client_fd) + "\t http port: " + std::to_string(port));
     // 只peek前16字节用于协议判断
     std::vector<char> peek_buf(16);
     ssize_t n = recv(client_fd, peek_buf.data(), peek_buf.size(), MSG_PEEK);
     if (n <= 0) {
         // 客户端关闭或出错
-        close(client_fd);
-        return;
+        return false;
     }
     std::string data(peek_buf.data(), n);
 
@@ -34,15 +33,17 @@ inline void dispatch_protocol(int client_fd, int port) {
         SSL_CTX* ssl_ctx = SOK::https_util::create_ssl_ctx("server.crt", "server.key");
         SOK::utils::SiteInfo site_info(port);
         SOK::https_util::handle_https(client_fd, ssl_ctx, site_info);
+        return false;
     }else if (std::regex_search(data, http_regex)) {
         // HTTP协议，交给handle_http处理（handle_http里负责完整读取和解析）
         SOK::utils::SiteInfo site_info(port);
-        SOK::http_util::handle_http(client_fd, site_info);
+        return SOK::http_util::handle_http(client_fd, site_info);
     } else {
         // 其他协议可扩展
         // handle_proxy(client_fd); 或 handle_loadbalance(client_fd);
-        close(client_fd);
-        return;
+        SOK_LOG_WARN("Unsupported protocol or malformed request from client_fd: " + 
+            std::to_string(client_fd) + " on port: " + std::to_string(port));
+        return false;
     }
 }
 

@@ -31,10 +31,10 @@ inline std::map<std::string, std::string> parse_headers(std::istringstream& iss)
     return headers;
 }
 
-inline void handle_https(int client_fd, SSL_CTX* ssl_ctx, const SOK::utils::SiteInfo& site_info) {
-    // SOK::Logger::instance().info("http client_fd: " + std::to_string(client_fd) + "\n http port: " + std::to_string(site_info.getPort()));
-    // SOK::Logger::instance().info("Site root: " + site_info.getRootDir());
-    // SOK::Logger::instance().info("Site name: " + site_info.getSiteName());
+inline bool handle_https(int client_fd, SSL_CTX* ssl_ctx, const SOK::utils::SiteInfo& site_info) {
+    // SOK_LOG_INFO("http client_fd: " + std::to_string(client_fd) + "\n http port: " + std::to_string(site_info.getPort()));
+    // SOK_LOG_INFO("Site root: " + site_info.getRootDir());
+    // SOK_LOG_INFO("Site name: " + site_info.getSiteName());
     static mstd::FileCache file_cache(1024*1024*50); // 50MB缓存
     SSL* ssl = SSL_new(ssl_ctx);
     SSL_set_fd(ssl, client_fd);
@@ -42,17 +42,15 @@ inline void handle_https(int client_fd, SSL_CTX* ssl_ctx, const SOK::utils::Site
     unsigned char peek_buf;
     ssize_t peeked = recv(client_fd, &peek_buf, 1, MSG_PEEK);
     if (peeked != 1 || peek_buf != 0x16) {
-        SOK::Logger::instance().error("Not a valid SSL/TLS connection");
-        close(client_fd);
+        SOK_LOG_ERROR("Not a valid SSL/TLS connection");
         SSL_free(ssl);
-        return;
+        return false;
     }
 
     if (SSL_accept(ssl) <= 0) {
         ERR_print_errors_fp(stderr);
-        close(client_fd);
         SSL_free(ssl);
-        return;
+        return false;
     }
 
     bool keep_alive = false;
@@ -89,8 +87,8 @@ inline void handle_https(int client_fd, SSL_CTX* ssl_ctx, const SOK::utils::Site
             std::string root_dir = site_info.getRootDir();
             std::string file_path = root_dir + path;
             if (file_path == root_dir + "/" || file_path == root_dir) file_path = root_dir + "/index.html";
-            SOK::Logger::instance().info("Http Request: " + method + " " + path);
-            SOK::Logger::instance().info("find file_path: " + file_path);
+            SOK_LOG_INFO("Http Request: " + method + " " + path);
+            SOK_LOG_INFO("find file_path: " + file_path);
             auto file = file_cache.get(file_path);
             if (file) {
                 const auto& content = file->first;
@@ -124,8 +122,8 @@ inline void handle_https(int client_fd, SSL_CTX* ssl_ctx, const SOK::utils::Site
         }
     } while (keep_alive);
     SSL_shutdown(ssl);
-    close(client_fd);
     SSL_free(ssl);
+    return keep_alive;
 }
 
 inline SSL_CTX* create_ssl_ctx(const char* cert_file, const char* key_file) {

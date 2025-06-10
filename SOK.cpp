@@ -32,15 +32,15 @@ void processWorker(const std::vector<int>& ports) {
     for (int port : ports) {
         int server_fd = SOK::setup_server(port);
         SOK::FdPortRegistry::instance().addFdPort(server_fd, port);
-        // SOK::Logger::instance().info("server_fd: " + std::to_string(server_fd));
+        // SOK_LOG_INFO("server_fd: " + std::to_string(server_fd));
         // if(SOK::FdPortRegistry::instance().addFdPort(server_fd, port)){
-        //     SOK::Logger::instance().info("Added fd-port mapping: " + std::to_string(server_fd) + " -> " + std::to_string(port));
+        //     SOK_LOG_INFO("Added fd-port mapping: " + std::to_string(server_fd) + " -> " + std::to_string(port));
         // } else {
-        //     SOK::Logger::instance().warn("Failed to add fd-port mapping for fd: " + std::to_string(server_fd) + ", port: " + std::to_string(port));
+        //     SOK_LOG_WARN("Failed to add fd-port mapping for fd: " + std::to_string(server_fd) + ", port: " + std::to_string(port));
         //     close(server_fd);
         //     continue;
         // }
-        // SOK::Logger::instance().info("port: " + std::to_string(SOK::FdPortRegistry::instance().getPort(server_fd)));
+        // SOK_LOG_INFO("port: " + std::to_string(SOK::FdPortRegistry::instance().getPort(server_fd)));
         epoll_event event;
         event.events = EPOLLIN;
         event.data.fd = server_fd;
@@ -50,9 +50,9 @@ void processWorker(const std::vector<int>& ports) {
             continue;
         }
         server_fds.push_back(server_fd);
-        SOK::Logger::instance().info("Process " + std::to_string(getpid()) + " listening on port " + std::to_string(port));
+        SOK_LOG_INFO("Process " + std::to_string(getpid()) + " listening on port " + std::to_string(port));
     }
-    epoll_worker(epoll_fd); // -1 表示不需要特定的 server_fd
+    epoll_worker(epoll_fd, server_fds); // -1 表示不需要特定的 server_fd
 
     for (int fd : server_fds) {
         close(fd);
@@ -68,7 +68,7 @@ int main() {
 
     // 初始化日志系统
     SOK::Logger::instance().set_logfile("server.log");
-    SOK::Logger::instance().info("Server started...");
+    SOK_LOG_INFO("Server started...");
     
     // 加载配置文件
     SOK::Config::instance().load("config.yaml");
@@ -80,15 +80,15 @@ int main() {
     auto root = SOK::Config::instance().root();
     // std::string ip = root.getValue<std::string>("ip");
     // int proc_num = root.getValue<int>("cpu_cores");
-    // SOK::Logger::instance().info("Config IP: " + ip);
-    // SOK::Logger::instance().info("Config cpu_cores: " + std::to_string(proc_num));
+    // SOK_LOG_INFO("Config IP: " + ip);
+    // SOK_LOG_INFO("Config cpu_cores: " + std::to_string(proc_num));
     auto servers = root.getArray("servers");
     for (const auto& server : servers) {
         // std::string name = server.getValue<std::string>("name");
         int port = server.getValue<int>("port");
         ports.push_back(port);
         // std::string root_dir = server.getValue<std::string>("root");
-        // SOK::Logger::instance().info("Server: name=" + name + ", port=" + std::to_string(port) + ", root=" + root_dir);
+        // SOK_LOG_INFO("Server: name=" + name + ", port=" + std::to_string(port) + ", root=" + root_dir);
         // // 检查是否有 locations 属性
         // try {
         //     auto locations = server.getArray("locations");
@@ -100,7 +100,7 @@ int main() {
         //             std::string proxy_pass, response;
         //             try { proxy_pass = location_obj.getValue<std::string>("proxy_pass"); } catch (...) {}
         //             try { response = location_obj.getValue<std::string>("response"); } catch (...) {}
-        //             SOK::Logger::instance().info("  Location: url=" + url + (proxy_pass.empty() ? "" : (", proxy_pass=" + proxy_pass)) + (response.empty() ? "" : (", response=" + response)));
+        //             SOK_LOG_INFO("  Location: url=" + url + (proxy_pass.empty() ? "" : (", proxy_pass=" + proxy_pass)) + (response.empty() ? "" : (", response=" + response)));
         //         } catch (...) {}
         //     }
         // } catch (...) {
@@ -108,9 +108,9 @@ int main() {
         // }
     }
 
-    SOK::Logger::instance().info("Loaded configuration...");
+    SOK_LOG_INFO("Loaded configuration...");
     
-    SOK::Logger::instance().info("Successfully initialized SOK server.");
+    SOK_LOG_INFO("Successfully initialized SOK server.");
 
 
     SOK::ForkManager forkManager;
@@ -122,11 +122,11 @@ int main() {
     } else {
         cpu_cores = std::thread::hardware_concurrency();
     }
-    SOK::Logger::instance().info("Detected " + std::to_string(cpu_cores) + " CPU cores.");
+    SOK_LOG_INFO("Detected " + std::to_string(cpu_cores) + " CPU cores.");
 
     // 要监听的端口列表
     // std::vector<int> ports = {8081, 8082};
-    SOK::Logger::instance().info("Listening on ports: " + 
+    SOK_LOG_INFO("Listening on ports: " + 
         std::accumulate(
             std::next(ports.begin()), ports.end(), std::to_string(ports[0]),
             [](std::string a, int b) { return std::move(a) + " " + std::to_string(b); }
@@ -149,12 +149,12 @@ int main() {
 
     while (running.load()) {
         std::string command;
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+        std::this_thread::sleep_for(std::chrono::seconds(1));
         std::cout << "Enter command (restart/exit): ";
         std::cin >> command;
 
         if (command == "restart") {
-            SOK::Logger::instance().info("Restarting child processes...");
+            SOK_LOG_INFO("Restarting child processes...");
             forkManager.terminateAll();
 
             // 重新加载配置文件
