@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <map>
 #include <mutex>
+#include <fcntl.h>
 
 namespace SOK {
 
@@ -16,12 +17,24 @@ int setup_server(int port) {
         throw std::runtime_error("Failed to create socket");
     }
 
+    // 设置为非阻塞
+    int flags = fcntl(server_fd, F_GETFL, 0);
+    if (flags == -1 || fcntl(server_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        close(server_fd);
+        throw std::runtime_error("Failed to set server socket non-blocking");
+    }
+
     int opt = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
         close(server_fd);
-        throw std::runtime_error("Failed to set socket options");
+        throw std::runtime_error("Failed to set SO_REUSEADDR");
     }
-
+#ifdef SO_REUSEPORT
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) == -1) {
+        close(server_fd);
+        throw std::runtime_error("Failed to set SO_REUSEPORT");
+    }
+#endif
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;

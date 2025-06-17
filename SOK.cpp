@@ -5,6 +5,7 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
+#include <sys/wait.h>
 #include "Core/utils/ForkManager.hpp"
 #include "Core/utils/SocketUtils.hpp"
 #include "Core/mstd/EpollManager.hpp"
@@ -13,109 +14,102 @@
 
 std::atomic<bool> running(true);
 
+
+/// @brief 子进程信号处理函数，用于处理子进程退出事件
+/// @param signo 
+void sigchld_handler(int signo) {
+    int status = 0;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (WIFEXITED(status)) {
+            SOK_LOG_ERROR("Reaped child process pid=" + std::to_string(pid) +
+                ", exited with code " + std::to_string(WEXITSTATUS(status)));
+        } else if (WIFSIGNALED(status)) {
+            SOK_LOG_ERROR("Reaped child process pid=" + std::to_string(pid) +
+                ", killed by signal " + std::to_string(WTERMSIG(status)));
+        }
+    }
+}
+
+
+/// @brief  信号处理函数，用于处理SIGINT信号（Ctrl+C）
+/// @param signum 
 void signalHandler(int signum) {
     if (signum == SIGINT) {
         running.store(false);
     }
 }
 
-/// @brief 每个进程监听一组端口
+/// @brief 每个进程监听一组端口，主事件循环
 /// @param ports 要监听的端口列表
 void processWorker(const std::vector<int>& ports) {
-    int epoll_fd = epoll_create1(0);
-    if (epoll_fd == -1) {
-        perror("Failed to create epoll instance");
+    try {
+        int epoll_fd = epoll_create1(0);
+        if (epoll_fd == -1) {
+            perror("Failed to create epoll instance");
+            exit(EXIT_FAILURE);
+        }
+
+        // 全局只创建一次 SSL_CTX
+        static SSL_CTX* ssl_ctx = SOK::https_util::create_ssl_ctx("server.crt", "server.key");
+
+        std::vector<int> server_fds;
+        for (int port : ports) {
+            int server_fd = SOK::setup_server(port);
+            SOK::FdPortRegistry::instance().addFdPort(server_fd, port);
+            epoll_event event;
+            event.events = EPOLLIN;
+            event.data.fd = server_fd;
+            if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event) == -1) {
+                perror("Failed to add server_fd to epoll");
+                close(server_fd);
+                continue;
+            }
+            server_fds.push_back(server_fd);
+            SOK_LOG_INFO("Process " + std::to_string(getpid()) + " listening on port " + std::to_string(port));
+        }
+        epoll_worker(epoll_fd, server_fds, ssl_ctx);
+
+        for (int fd : server_fds) {
+            close(fd);
+        }
+        close(epoll_fd);
+    } catch (const std::exception& ex) {
+        SOK_LOG_ERROR(std::string("子进程异常退出: ") + ex.what());
+        exit(EXIT_FAILURE);
+    } catch (...) {
+        SOK_LOG_ERROR("子进程发生未知异常，退出");
         exit(EXIT_FAILURE);
     }
-
-    std::vector<int> server_fds;
-    for (int port : ports) {
-        int server_fd = SOK::setup_server(port);
-        SOK::FdPortRegistry::instance().addFdPort(server_fd, port);
-        // SOK_LOG_INFO("server_fd: " + std::to_string(server_fd));
-        // if(SOK::FdPortRegistry::instance().addFdPort(server_fd, port)){
-        //     SOK_LOG_INFO("Added fd-port mapping: " + std::to_string(server_fd) + " -> " + std::to_string(port));
-        // } else {
-        //     SOK_LOG_WARN("Failed to add fd-port mapping for fd: " + std::to_string(server_fd) + ", port: " + std::to_string(port));
-        //     close(server_fd);
-        //     continue;
-        // }
-        // SOK_LOG_INFO("port: " + std::to_string(SOK::FdPortRegistry::instance().getPort(server_fd)));
-        epoll_event event;
-        event.events = EPOLLIN;
-        event.data.fd = server_fd;
-        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event) == -1) {
-            perror("Failed to add server_fd to epoll");
-            close(server_fd);
-            continue;
-        }
-        server_fds.push_back(server_fd);
-        SOK_LOG_INFO("Process " + std::to_string(getpid()) + " listening on port " + std::to_string(port));
-    }
-    epoll_worker(epoll_fd, server_fds); // -1 表示不需要特定的 server_fd
-
-    for (int fd : server_fds) {
-        close(fd);
-    }
-    close(epoll_fd);
 }
 
 int main() {
+    // 忽略SIGPIPE，防止写已关闭socket时进程被杀死
+    signal(SIGPIPE, SIG_IGN);
+    // 注册SIGCHLD信号处理器
+    signal(SIGCHLD, sigchld_handler);
+    // 注册SIGINT信号处理器
     signal(SIGINT, signalHandler);
 
-    // 初始化描述符和端口号映射记录
     SOK::FdPortRegistry::instance();
-
-    // 初始化日志系统
     SOK::Logger::instance().set_logfile("server.log");
     SOK_LOG_INFO("Server started...");
-    
-    // 加载配置文件
+
     SOK::Config::instance().load("config.yaml");
 
-    // 获取配置中的端口列表
     std::vector<int> ports;
-
-    // 测试yaml解析输出
     auto root = SOK::Config::instance().root();
-    // std::string ip = root.getValue<std::string>("ip");
-    // int proc_num = root.getValue<int>("cpu_cores");
-    // SOK_LOG_INFO("Config IP: " + ip);
-    // SOK_LOG_INFO("Config cpu_cores: " + std::to_string(proc_num));
     auto servers = root.getArray("servers");
     for (const auto& server : servers) {
-        // std::string name = server.getValue<std::string>("name");
         int port = server.getValue<int>("port");
         ports.push_back(port);
-        // std::string root_dir = server.getValue<std::string>("root");
-        // SOK_LOG_INFO("Server: name=" + name + ", port=" + std::to_string(port) + ", root=" + root_dir);
-        // // 检查是否有 locations 属性
-        // try {
-        //     auto locations = server.getArray("locations");
-        //     for (const auto& loc : locations) {
-        //         // location 可能是对象，也可能是嵌套对象
-        //         try {
-        //             auto location_obj = loc.getObject("location");
-        //             std::string url = location_obj.getValue<std::string>("url");
-        //             std::string proxy_pass, response;
-        //             try { proxy_pass = location_obj.getValue<std::string>("proxy_pass"); } catch (...) {}
-        //             try { response = location_obj.getValue<std::string>("response"); } catch (...) {}
-        //             SOK_LOG_INFO("  Location: url=" + url + (proxy_pass.empty() ? "" : (", proxy_pass=" + proxy_pass)) + (response.empty() ? "" : (", response=" + response)));
-        //         } catch (...) {}
-        //     }
-        // } catch (...) {
-        //     // 没有locations属性，忽略
-        // }
     }
 
     SOK_LOG_INFO("Loaded configuration...");
-    
     SOK_LOG_INFO("Successfully initialized SOK server.");
-
 
     SOK::ForkManager forkManager;
 
-    // 获取 CPU 核心数
     int cpu_cores;
     if(root.getValue<int>("cpu_cores") > 0) {
         cpu_cores = root.getValue<int>("cpu_cores");
@@ -124,32 +118,22 @@ int main() {
     }
     SOK_LOG_INFO("Detected " + std::to_string(cpu_cores) + " CPU cores.");
 
-    // 要监听的端口列表
-    // std::vector<int> ports = {8081, 8082};
-    SOK_LOG_INFO("Listening on ports: " + 
+    SOK_LOG_INFO("Listening on ports: " +
         std::accumulate(
             std::next(ports.begin()), ports.end(), std::to_string(ports[0]),
             [](std::string a, int b) { return std::move(a) + " " + std::to_string(b); }
         )
     );
 
-    // 将端口分配给每个进程
-    int ports_per_process = (ports.size() + cpu_cores - 1) / cpu_cores; // 向上取整
-    auto it = ports.begin();
-
-    for (int i = 0; i < cpu_cores && it != ports.end(); ++i) {
-        auto end_it = std::next(it, std::min(ports_per_process, static_cast<int>(std::distance(it, ports.end()))));
-        std::vector<int> process_ports(it, end_it);
-        it = end_it;
-
-        forkManager.createChildProcess([process_ports] {
-            processWorker(process_ports);
+    // 启动每个子进程都监听所有端口
+    for (int i = 0; i < cpu_cores; ++i) {
+        forkManager.createChildProcess([ports] {
+            processWorker(ports); // 每个进程都监听所有端口
         });
     }
 
     while (running.load()) {
         std::string command;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
         std::cout << "Enter command (restart/exit): ";
         std::cin >> command;
 
@@ -157,31 +141,22 @@ int main() {
             SOK_LOG_INFO("Restarting child processes...");
             forkManager.terminateAll();
 
-            // 重新加载配置文件
             SOK::Logger::instance().set_logfile("server.log");
             SOK::Config::instance().load("config.yaml");
 
-            // 重新分配端口并启动子进程
-            it = ports.begin();
-            for (int i = 0; i < cpu_cores && it != ports.end(); ++i) {
-                auto end_it = std::next(it, std::min(ports_per_process, static_cast<int>(std::distance(it, ports.end()))));
-                std::vector<int> process_ports(it, end_it);
-                it = end_it;
-
-                forkManager.createChildProcess([process_ports] {
-                    processWorker(process_ports);
+            for (int i = 0; i < cpu_cores; ++i) {
+                forkManager.createChildProcess([ports] {
+                    processWorker(ports); // 每个进程都监听所有端口
                 });
             }
+
         } else if (command == "exit") {
             running.store(false);
         }
-
-        // 检查子进程状态
         forkManager.monitorChildren();
     }
 
-    // 终止所有子进程
     forkManager.terminateAll();
-
+    
     return 0;
 }

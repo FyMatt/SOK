@@ -28,8 +28,7 @@ public:
 
     //  获取文件内容和类型, 先判断文件是否已经更新
     std::optional<std::pair<std::vector<char>, std::string>> get(const std::string& file_path) {
-        std::shared_lock lock(mutex_); // 共享锁用于读操作
-        
+        std::unique_lock lock(mutex_); // 多线程下所有操作都用独占锁
         auto it = cache_.find(file_path);
         if (it != cache_.end()) {
             // 检查文件是否已修改
@@ -81,11 +80,13 @@ public:
 
     // 获取缓存命中次数
     size_t get_cache_hits() const {
+        std::shared_lock lock(mutex_);
         return cache_hits_;
     }
 
     // 获取缓存未命中次数
     size_t get_cache_misses() const {
+        std::shared_lock lock(mutex_);
         return cache_misses_;
     }
 
@@ -129,15 +130,9 @@ private:
         return true;
     }
 
-    //  
-    /**
-     * @brief 从缓存中移除最近最少使用的文件 (LRU).
-     *
-     * 该函数从缓存中移除最近最少使用的文件以释放空间。
-     * 它更新当前缓存大小，并从缓存和LRU列表中移除该文件。
-     * 如果LRU列表为空，该函数立即返回，不执行任何操作。
-     */
+    //  从缓存中移除最近最少使用的文件 (LRU)
     void evict() {
+        // 这里假定外层已加锁
         if (lru_list_.empty()) return;
 
         const std::string& lru_file = lru_list_.back(); // 获取LRU列表中的最后一个文件
@@ -179,7 +174,7 @@ private:
     size_t current_size_; // 当前缓存大小
     std::list<std::string> lru_list_; // LRU列表    Least Recently Used，最近最少使用
     std::unordered_map<std::string, CachedFile> cache_; // 文件缓存
-    std::shared_mutex mutex_; // 读写锁
+    mutable std::shared_mutex mutex_; // 读写锁
     size_t cache_hits_; // 缓存命中次数
     size_t cache_misses_; // 缓存未命中次数
 };
