@@ -13,6 +13,7 @@
 #include "../utils/ProtocolDispatcher.hpp"
 #include "../utils/Config.hpp"
 #include "../protocols/https.hpp"
+#include <shared_mutex>
 
 /// @brief 处理单个客户端连接，根据端口自动分发协议
 inline bool handle_connection(int client_fd, int port, SSL_CTX* ssl_ctx) {
@@ -28,6 +29,7 @@ inline void epoll_worker(int epoll_fd, std::vector<int> &server_fds, SSL_CTX* ss
     mstd::ThreadPool thread_pool(SOK::Config::instance().root().getValue<int>("per_process_max_thread_count")); // 创建线程池
     static std::map<int, int> client_map_port;
     static std::set<int> working_fds;
+    static std::mutex client_map_port_mtx;
     static std::mutex working_fds_mtx;
     while (true) {
         int event_count = epoll_wait(epoll_fd, events, SOK::Config::instance().root().getValue<int>("per_process_max_events"), -1);
@@ -40,97 +42,111 @@ inline void epoll_worker(int epoll_fd, std::vector<int> &server_fds, SSL_CTX* ss
                     socklen_t client_len = sizeof(client_addr);
                     int new_client_fd = accept(client_fd, (sockaddr*)&client_addr, &client_len);
                     if (new_client_fd != -1) {
-                        // 设置 client fd 为非阻塞
                         int flags = fcntl(new_client_fd, F_GETFL, 0);
                         if (flags != -1) {
                             fcntl(new_client_fd, F_SETFL, flags | O_NONBLOCK);
                         }
-
                         char client_ip[INET_ADDRSTRLEN];
                         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
                         int port = SOK::FdPortRegistry::instance().getPort(client_fd);
                         {
-                            std::lock_guard<std::mutex> lock(working_fds_mtx);
+                            std::lock_guard<std::mutex> lock(client_map_port_mtx);
                             client_map_port[new_client_fd] = port;
                         }
                         epoll_event client_event{};
                         client_event.events = EPOLLIN;
                         client_event.data.fd = new_client_fd;
                         epoll_ctl(epoll_fd, EPOLL_CTL_ADD, new_client_fd, &client_event);
-                        // 新连接已加入epoll
                     }
                 } else {
-                    // 已连接的客户端请求
                     bool skip = false;
                     {
-                        std::lock_guard<std::mutex> lock(working_fds_mtx);
-                        if (working_fds.count(client_fd) || client_map_port.find(client_fd) == client_map_port.end()) {
+                        std::lock_guard<std::mutex> lock1(working_fds_mtx);
+                        if (working_fds.count(client_fd)) {
                             skip = true;
                         } else {
                             working_fds.insert(client_fd);
                         }
                     }
+                    {
+                        std::lock_guard<std::mutex> lock2(client_map_port_mtx);
+                        if (client_map_port.find(client_fd) == client_map_port.end()) {
+                            std::lock_guard<std::mutex> lock3(working_fds_mtx);
+                            working_fds.erase(client_fd);
+                            continue;
+                        }
+                    }
                     if (skip) continue;
-
                     int port = -1;
                     {
-                        std::lock_guard<std::mutex> lock(working_fds_mtx);
+                        std::lock_guard<std::mutex> lock(client_map_port_mtx);
                         auto it = client_map_port.find(client_fd);
                         if (it != client_map_port.end()) {
                             port = it->second;
                         } else {
-                            // fd已失效，跳过
                             std::lock_guard<std::mutex> lock2(working_fds_mtx);
                             working_fds.erase(client_fd);
                             continue;
                         }
                     }
-
-                    // 投递到线程池
                     thread_pool.enqueue([client_fd, port, epoll_fd, ssl_ctx] {
                         try {
-                            // 处理协议分发和业务
                             bool keep_alive = handle_connection(client_fd, port, ssl_ctx);
                             if (!keep_alive) {
                                 // 关闭 fd 前同步清理 SSL*
                                 auto& ssl_map = SOK::https_util::ssl_map;
+                                {
+                                    std::lock_guard<std::mutex> lock(SOK::https_util::ssl_map_mtx);
+                                    auto it = ssl_map.find(client_fd);
+                                    if (it != ssl_map.end()) {
+                                        SSL_shutdown(it->second);
+                                        SSL_free(it->second);
+                                        ssl_map.erase(it);
+                                    }
+                                }
+                                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
+                                close(client_fd);
+                                {
+                                    std::lock_guard<std::mutex> lock(client_map_port_mtx);
+                                    client_map_port.erase(client_fd);
+                                }
+                            }
+                        } catch(const std::exception& e) {
+                            SOK_LOG_ERROR("Exception in thread: " + std::string(e.what()) + " for fd: " + std::to_string(client_fd) + " on port: " + std::to_string(port));
+                            auto& ssl_map = SOK::https_util::ssl_map;
+                            {
+                                std::lock_guard<std::mutex> lock(SOK::https_util::ssl_map_mtx);
                                 auto it = ssl_map.find(client_fd);
                                 if (it != ssl_map.end()) {
                                     SSL_shutdown(it->second);
                                     SSL_free(it->second);
                                     ssl_map.erase(it);
                                 }
-                                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
-                                close(client_fd);
-                                std::lock_guard<std::mutex> lock(working_fds_mtx);
-                                client_map_port.erase(client_fd);
-                            }
-                        } catch(const std::exception& e) {
-                            SOK_LOG_ERROR("Exception in thread: " + std::string(e.what()) + " for fd: " + std::to_string(client_fd) + " on port: " + std::to_string(port));
-                            auto& ssl_map = SOK::https_util::ssl_map;
-                            auto it = ssl_map.find(client_fd);
-                            if (it != ssl_map.end()) {
-                                SSL_shutdown(it->second);
-                                SSL_free(it->second);
-                                ssl_map.erase(it);
                             }
                             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
                             close(client_fd);
-                            std::lock_guard<std::mutex> lock(working_fds_mtx);
-                            client_map_port.erase(client_fd);
+                            {
+                                std::lock_guard<std::mutex> lock(client_map_port_mtx);
+                                client_map_port.erase(client_fd);
+                            }
                         } catch(...) {
                             SOK_LOG_ERROR("Unknown exception in thread for fd: " + std::to_string(client_fd) + " on port: " + std::to_string(port));
                             auto& ssl_map = SOK::https_util::ssl_map;
-                            auto it = ssl_map.find(client_fd);
-                            if (it != ssl_map.end()) {
-                                SSL_shutdown(it->second);
-                                SSL_free(it->second);
-                                ssl_map.erase(it);
+                            {
+                                std::lock_guard<std::mutex> lock(SOK::https_util::ssl_map_mtx);
+                                auto it = ssl_map.find(client_fd);
+                                if (it != ssl_map.end()) {
+                                    SSL_shutdown(it->second);
+                                    SSL_free(it->second);
+                                    ssl_map.erase(it);
+                                }
                             }
                             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
                             close(client_fd);
-                            std::lock_guard<std::mutex> lock(working_fds_mtx);
-                            client_map_port.erase(client_fd);
+                            {
+                                std::lock_guard<std::mutex> lock(client_map_port_mtx);
+                                client_map_port.erase(client_fd);
+                            }
                         }
                         {
                             std::lock_guard<std::mutex> lock(working_fds_mtx);

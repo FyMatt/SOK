@@ -7,6 +7,7 @@
 #include <map>
 #include <vector>
 #include <unordered_map>
+#include <mutex>
 #include "../utils/Logger.hpp"
 #include "../mstd/fileCache.hpp"
 #include "../utils/SiteConfig.hpp"
@@ -16,8 +17,8 @@
 namespace SOK {
 namespace https_util {
 
-/// @brief 全局 SSL* 映射，确保每个 fd 只分配一个 SSL*，并安全管理其生命周期
 static std::unordered_map<int, SSL*> ssl_map;
+static std::mutex ssl_map_mtx;
 
 /// @brief 更安全的 SSL 写入函数，处理 EPIPE、EAGAIN 等错误，并详细日志
 inline bool safe_ssl_write(SSL* ssl, const void* buf, int num) {
@@ -107,34 +108,32 @@ inline bool handle_https(int client_fd, SSL_CTX* ssl_ctx, const SOK::utils::Site
         static mstd::FileCache file_cache(1024*1024*50); // 50MB缓存
         SSL* ssl = nullptr;
         bool is_new_ssl = false;
-        if (ssl_map.count(client_fd) == 0) {
-            // 只在新建 SSL* 时判断 0x16
-            unsigned char peek_buf;
-            ssize_t peeked = recv(client_fd, &peek_buf, 1, MSG_PEEK);
-            if (peeked != 1 || peek_buf != 0x16) {
-                SOK_LOG_WARN("Https Received empty or invalid handshake from client_fd: " + std::to_string(client_fd) + " on port: " + std::to_string(site_info.getPort()));
-                return false;
+        {
+            std::lock_guard<std::mutex> lock(ssl_map_mtx);
+            if (ssl_map.count(client_fd) == 0) {
+                // 只在新建 SSL* 时判断 0x16
+                unsigned char peek_buf;
+                ssize_t peeked = recv(client_fd, &peek_buf, 1, MSG_PEEK);
+                if (peeked != 1 || peek_buf != 0x16) {
+                    SOK_LOG_WARN("Https Received empty or invalid handshake from client_fd: " + std::to_string(client_fd) + " on port: " + std::to_string(site_info.getPort()));
+                    return false;
+                }
+                ssl = SSL_new(ssl_ctx);
+                SSL_set_fd(ssl, client_fd);
+                ssl_map[client_fd] = ssl;
+                is_new_ssl = true;
+            } else {
+                ssl = ssl_map[client_fd];
             }
-            ssl = SSL_new(ssl_ctx);
-            SSL_set_fd(ssl, client_fd);
-            ssl_map[client_fd] = ssl;
-            is_new_ssl = true;
-        } else {
-            ssl = ssl_map[client_fd];
         }
         int ret = SSL_accept(ssl);
         if (ret <= 0) {
             int err = SSL_get_error(ssl, ret);
             if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-                // 握手未完成，等待下次 epoll
                 return true;
             }
             SOK_LOG_ERROR("SSL_accept failed for fd: " + std::to_string(client_fd));
-            if (ssl) {
-                SSL_shutdown(ssl);
-                SSL_free(ssl);
-                ssl_map.erase(client_fd);
-            }
+            // 释放SSL* 由epoll_worker统一处理
             return false;
         }
         // 握手成功后，直接用 SSL_read 读取 HTTP 请求，不再用 peek 判断
@@ -228,21 +227,9 @@ inline bool handle_https(int client_fd, SSL_CTX* ssl_ctx, const SOK::utils::Site
         return true;
     } catch(const std::exception& e) {
         SOK_LOG_ERROR(std::string("handle_https exception: ") + e.what() + " for fd: " + std::to_string(client_fd) + " on port: " + std::to_string(site_info.getPort()));
-        if (ssl_map.count(client_fd)) {
-            SSL* ssl = ssl_map[client_fd];
-            SSL_shutdown(ssl);
-            SSL_free(ssl);
-            ssl_map.erase(client_fd);
-        }
         return false;
     } catch(...) {
         SOK_LOG_ERROR("handle_https unknown exception for fd: " + std::to_string(client_fd) + " on port: " + std::to_string(site_info.getPort()));
-        if (ssl_map.count(client_fd)) {
-            SSL* ssl = ssl_map[client_fd];
-            SSL_shutdown(ssl);
-            SSL_free(ssl);
-            ssl_map.erase(client_fd);
-        }
         return false;
     }
 }
