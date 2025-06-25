@@ -37,6 +37,7 @@ inline void send_http_response(int client_fd, const std::string& version, int st
     std::ostringstream oss;
     oss << version << " " << status_code << " " << status_text << "\r\n";
     if (!mime.empty()) oss << "Content-Type: " << mime << "\r\n";
+    oss << "Server: SOK\r\n";
     oss << "Content-Length: " << body.size() << "\r\n";
     if (keep_alive) oss << "Connection: keep-alive\r\n";
     oss << "\r\n";
